@@ -11,6 +11,7 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 
+const { spawn } = require("child_process");
 const app = express();
 app.use(express.json());
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
@@ -503,12 +504,18 @@ app.post('/create-image', async (req, res) => {
 // Sonuç kontrol
 app.get('/result/:jobId', (req, res) => {
   const job = jobs[req.params.jobId];
-  if (!job) return res.status(404).json({ error: 'Job bulunamadı' });
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job bulunamadı' });
+  }
+
   res.json({
     jobId: req.params.jobId,
     status: job.status,
-    imageUrl: job.imageUrl,
-    error: job.error
+    imageUrl: job.imageUrl || null,
+    videoUrl: job.videoUrl || null,
+    title: job.title || '',
+    error: job.error || null
   });
 });
 
@@ -674,6 +681,54 @@ app.get('/latest-demarke', async (req, res) => {
 app.get('/health', (req, res) => {
   const activeJobs = Object.values(jobs).filter(j => j.status === 'processing').length;
   res.json({ status: 'ok', activeJobs, totalJobs: Object.keys(jobs).length });
+});
+
+app.post('/download-video', async (req, res) => {
+  const tweetUrl = req.body.tweetUrl || req.body.link;
+  const title = req.body.title || '';
+
+  if (!tweetUrl) {
+    return res.status(400).json({ error: 'tweetUrl zorunlu' });
+  }
+
+  const jobId = createJob();
+  const jobDir = path.join(JOBS_DIR, jobId);
+  const outputPath = path.join(jobDir, 'video.mp4');
+
+  jobs[jobId].status = 'processing';
+  jobs[jobId].videoUrl = null;
+  jobs[jobId].error = null;
+
+  res.json({ jobId, status: 'processing' });
+
+  const args = [
+    '-m',
+    'yt_dlp',
+    '-f',
+    'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best',
+    '--merge-output-format',
+    'mp4',
+    '-o',
+    outputPath,
+    tweetUrl
+  ];
+
+  const proc = spawn('py', args);
+
+  proc.stdout.on('data', d => console.log('[yt-dlp]', d.toString()));
+  proc.stderr.on('data', d => console.log('[yt-dlp]', d.toString()));
+
+  proc.on('close', code => {
+    if (code !== 0 || !fs.existsSync(outputPath)) {
+      jobs[jobId].status = 'error';
+      jobs[jobId].error = 'Video indirilemedi';
+      return;
+    }
+
+    jobs[jobId].status = 'done';
+    jobs[jobId].videoUrl = `http://127.0.0.1:3000/file/${jobId}/video.mp4`;
+    jobs[jobId].title = title;
+  });
 });
 
 // ── Başlat ─────────────────────────────────────────────────
