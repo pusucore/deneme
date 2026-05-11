@@ -567,6 +567,62 @@ app.post('/add-footer', async (req, res) => {
   res.json({ jobId, status: 'pending' });
 });
 
+app.get('/latest-demarke', async (req, res) => {
+  try {
+    const browser = await getBrowser();
+    const contexts = browser.contexts();
+    const context = contexts[0] || await browser.newContext();
+
+    const page = await context.newPage();
+
+    await page.goto('https://x.com/demarkesports', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+    });
+
+    await page.waitForTimeout(5000);
+
+    const tweet = await page.evaluate(() => {
+      const article = document.querySelector('article');
+
+      if (!article) return null;
+
+      const text =
+        article.innerText || '';
+
+      const tweetLink =
+        article.querySelector('a[href*="/status/"]')?.href || '';
+
+      const tweetId =
+        tweetLink.split('/status/')[1]?.split('?')[0];
+
+      const image =
+        article.querySelector('img[src*="pbs.twimg.com/media"]');
+
+      const video =
+        article.querySelector('video');
+
+      return {
+        tweetId,
+        text,
+        imageUrl: image?.src || null,
+        isVideo: !!video,
+        link: tweetLink,
+      };
+    });
+
+    await page.close();
+
+    res.json(tweet || {});
+  } catch (e) {
+    console.error(e);
+
+    res.status(500).json({
+      error: e.message,
+    });
+  }
+});
+
 // Sağlık kontrolü
 app.get('/health', (req, res) => {
   const activeJobs = Object.values(jobs).filter(j => j.status === 'processing').length;
