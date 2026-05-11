@@ -568,58 +568,105 @@ app.post('/add-footer', async (req, res) => {
 });
 
 app.get('/latest-demarke', async (req, res) => {
+  let page;
+
   try {
     const browser = await getBrowser();
     const contexts = browser.contexts();
     const context = contexts[0] || await browser.newContext();
 
-    const page = await context.newPage();
+    page = await context.newPage();
 
     await page.goto('https://x.com/demarkesports', {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
 
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(7000);
 
     const tweet = await page.evaluate(() => {
-      const article = document.querySelector('article');
+      const articles = Array.from(document.querySelectorAll('article'));
 
-      if (!article) return null;
+      const blocked = [
+        "tv'de bugün",
+        "tvde bugün",
+        "tv’de bugün",
+        "#probably",
+        "#dryhopping",
+        "probably",
+        "dryhopping"
+      ];
 
-      const text =
-        article.innerText || '';
+      for (const article of articles) {
+        const rawText = article.innerText || '';
+        const lower = rawText.toLowerCase();
 
-      const tweetLink =
-        article.querySelector('a[href*="/status/"]')?.href || '';
+        if (!rawText.trim()) continue;
 
-      const tweetId =
-        tweetLink.split('/status/')[1]?.split('?')[0];
+        // Pinned / sabit tweet geç
+        if (lower.includes('pinned')) continue;
+        if (lower.includes('sabitlendi')) continue;
 
-      const image =
-        article.querySelector('img[src*="pbs.twimg.com/media"]');
+        // Reklam / TV program tweetleri geç
+        if (blocked.some(w => lower.includes(w))) continue;
 
-      const video =
-        article.querySelector('video');
+        const tweetLink =
+          article.querySelector('a[href*="/status/"]')?.href || '';
 
-      return {
-        tweetId,
-        text,
-        imageUrl: image?.src || null,
-        isVideo: !!video,
-        link: tweetLink,
-      };
+        const tweetId =
+          tweetLink.split('/status/')[1]?.split('?')[0];
+
+        if (!tweetId) continue;
+
+        const image =
+          article.querySelector('img[src*="pbs.twimg.com/media"]');
+
+        const video =
+          article.querySelector('video');
+
+        const lines = rawText
+          .split('\n')
+          .map(x => x.trim())
+          .filter(Boolean)
+          .filter(x => x !== 'De Marke Sports')
+          .filter(x => x !== '@demarkesports')
+          .filter(x => x !== '·')
+          .filter(x => !/^@\w+$/.test(x))
+          .filter(x => !/^\d+[smhd]$/.test(x))
+          .filter(x => !/^\d+[,.]?\d*[BK]?$/.test(x))
+          .filter(x => !/^Show more$/i.test(x))
+          .filter(x => !/^Translate post$/i.test(x))
+          .filter(x => !/^View post engagements$/i.test(x));
+
+        const cleanText = lines.join('\n').trim();
+
+        if (!cleanText) continue;
+
+        return {
+          tweetId,
+          text: cleanText,
+          title: cleanText,
+          imageUrl: image?.src || null,
+          isVideo: !!video,
+          tweetUrl: tweetLink,
+          link: tweetLink,
+        };
+      }
+
+      return null;
     });
-
-    await page.close();
 
     res.json(tweet || {});
   } catch (e) {
-    console.error(e);
+    console.error('[latest-demarke]', e);
 
     res.status(500).json({
       error: e.message,
     });
+  } finally {
+    if (page) {
+      await page.close().catch(() => {});
+    }
   }
 });
 
